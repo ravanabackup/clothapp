@@ -1,6 +1,6 @@
 {
-  "name": "AQI Clothes Advisor",
-  "description": "An Air Quality Index (AQI) based clothing and health protection advisor. Automatically detects the user's location to recommend appropriate clothes, masks, and activities based on air pollution and weather conditions.",
+  "name": "Chandigarh Laundry Drier",
+  "description": "An intelligent, physics-based laundry drying time estimator, tailored for localized atmospheric and weather forecasting in Chandigarh. Integrates air quality, VPD, relative humidity, wind speed, solar radiation, and precipitation penalties.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

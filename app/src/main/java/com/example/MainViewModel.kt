@@ -51,6 +51,7 @@ sealed interface UiState {
         // Settings
         val selectedPreset: FabricPreset,
         val isIndoorDrying: Boolean,
+        val initialMoisture: Float,
         
         // Drying physical outputs
         val dryingIndex: Double,
@@ -123,14 +124,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchLoading = MutableStateFlow(false)
     val searchLoading: StateFlow<Boolean> = _searchLoading.asStateFlow()
 
-    // Default Fallback coordinates: New Delhi, India
-    private val defaultLat = 28.6139
-    private val defaultLon = 77.2090
-    private val defaultLocName = "New Delhi, India"
+    // Default Fallback coordinates: Chandigarh, India
+    private val defaultLat = 30.7333
+    private val defaultLon = 76.7794
+    private val defaultLocName = "Chandigarh, India"
 
     // Backing config selection properties
     private var currentPreset = FabricPreset.STANDARD_TOWELS
     private var isIndoor = false
+    private var currentInitialMoisture = 1.0f
+
+    // Cached responses to support instant local recalculations on user change
+    private var lastWeatherResponse: WeatherResponse? = null
+    private var lastAirQualityResponse: AirQualityResponse? = null
 
     // Backing coordinates
     private var currentLatitude = defaultLat
@@ -138,7 +144,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var currentPlaceName = defaultLocName
 
     init {
-        // Initial setup - default New Delhi or prompt location
+        // Initial setup - default Chandigarh or prompt location
         loadAdvisorData(defaultLat, defaultLon, defaultLocName)
     }
 
@@ -165,12 +171,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Manual load of a location
-    fun loadAdvisorData(lat: Double, lon: Double, name: String) {
+    fun loadAdvisorData(lat: Double, lon: Double, name: String, isSilent: Boolean = false) {
         currentLatitude = lat
         currentLongitude = lon
         currentPlaceName = name
         
-        _uiState.value = UiState.Loading
+        if (!isSilent) {
+            _uiState.value = UiState.Loading
+        }
         viewModelScope.launch {
             try {
                 // Fetch concurrently from open-meteo
@@ -184,7 +192,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 processAndEmitSuccessState(weatherDeferred, aqiDeferred)
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error fetching API data", e)
-                _uiState.value = UiState.Error("Failed to fetch weather/AQI reports: ${e.localizedMessage ?: "Network Timeout"}")
+                if (!isSilent) {
+                    _uiState.value = UiState.Error("Failed to fetch weather/AQI reports: ${e.localizedMessage ?: "Network Timeout"}")
+                }
             }
         }
     }
@@ -225,10 +235,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshModelCalculationsOnCurrentData()
     }
 
+    fun updateInitialMoisture(moisture: Float) {
+        currentInitialMoisture = moisture.coerceIn(0.1f, 1.0f)
+        refreshModelCalculationsOnCurrentData()
+    }
+
     private fun refreshModelCalculationsOnCurrentData() {
-        val currentUi = _uiState.value
-        if (currentUi is UiState.Success) {
-            _uiState.value = UiState.Loading
+        val weather = lastWeatherResponse
+        val aqi = lastAirQualityResponse
+        if (weather != null && aqi != null) {
+            processAndEmitSuccessState(weather, aqi)
+        } else {
             loadAdvisorData(currentLatitude, currentLongitude, currentPlaceName)
         }
     }
@@ -251,6 +268,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         weather: WeatherResponse,
         airQuality: AirQualityResponse
     ) {
+        lastWeatherResponse = weather
+        lastAirQualityResponse = airQuality
+        
         val currWeather = weather.current ?: throw Exception("Current weather details blank")
         val hourlyWeather = weather.hourly ?: throw Exception("Hourly weather details blank")
         
@@ -343,7 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Current direct estimate
         val baseHours = 5.0 * currentPreset.multiplier
-        val estimatedDryingHours = baseHours / currentDI.coerceIn(0.12, 3.2)
+        val estimatedDryingHours = (baseHours * currentInitialMoisture) / currentDI.coerceIn(0.12, 3.2)
 
         // SERIES COLLECTION: Next 12 Hours
         val hourlyTimes = hourlyWeather.time
@@ -391,6 +411,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hourlyWinds,
             hourlyPrecips,
             currentPreset.multiplier,
+            currentInitialMoisture.toDouble(),
             isIndoor
         )
 
@@ -564,6 +585,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             aqiRating = rating,
             selectedPreset = currentPreset,
             isIndoorDrying = isIndoor,
+            initialMoisture = currentInitialMoisture,
             dryingIndex = currentDI,
             dryingScore = dryingScore,
             dryingStateLabel = dryingStateLabel,
@@ -710,10 +732,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         hourlyWind: List<Double>,
         hourlyPrecip: List<Double>,
         wetnessMultiplier: Double,
+        initialMoisture: Double,
         isIndoor: Boolean
     ): ViewDryingResult {
         val baseHours = 5.0 * wetnessMultiplier
-        var dryness = 0.0
+        var dryness = 1.0 - initialMoisture
         val dt = 10.0 / 60.0 // 10 minutes (0.166h)
         var simulatedSteps = 0
         val maxSteps = 48 * 6 // 48 hours max simulation range

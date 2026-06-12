@@ -50,6 +50,10 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.isGranted
 import com.example.data.model.GeocodingResult
 import kotlin.math.roundToInt
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.Context
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -109,7 +113,21 @@ fun MainScreen(
         if (anyGranted) {
             viewModel.detectAndLoadCurrentLocation(context)
         } else {
-            // Falls back to default place New Delhi automatically via viewModel init
+            // Falls back to default place Chandigarh automatically via viewModel init
+        }
+    }
+
+    // Automated periodic background data refreshing every 60 seconds
+    LaunchedEffect(uiState) {
+        val currentState = uiState
+        if (currentState is UiState.Success) {
+            delay(60000)
+            viewModel.loadAdvisorData(
+                lat = currentState.latitude,
+                lon = currentState.longitude,
+                name = currentState.locationName,
+                isSilent = true
+            )
         }
     }
 
@@ -214,11 +232,11 @@ fun MainScreen(
                             )
                             Spacer(modifier = Modifier.height(24.dp))
                             Button(
-                                onClick = { viewModel.loadAdvisorData(28.6139, 77.2090, "New Delhi, India") },
+                                onClick = { viewModel.loadAdvisorData(30.7333, 76.7794, "Chandigarh, India") },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF)),
                                 modifier = Modifier.testTag("retry_button")
                             ) {
-                                Text("Retry with Default (New Delhi)", color = Color.Black, fontWeight = FontWeight.Bold)
+                                Text("Retry with Default (Chandigarh)", color = Color.Black, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -235,9 +253,7 @@ fun MainScreen(
                         // Current Location banner
                         item {
                             LocationBanner(
-                                name = state.locationName,
-                                lat = state.latitude,
-                                lon = state.longitude,
+                                state = state,
                                 onRefreshClick = {
                                     viewModel.loadAdvisorData(state.latitude, state.longitude, state.locationName)
                                 }
@@ -419,11 +435,10 @@ fun HeaderBar(
 // Current Location Banner displays the selected location's name and coordinates
 @Composable
 fun LocationBanner(
-    name: String,
-    lat: Double,
-    lon: Double,
+    state: UiState.Success,
     onRefreshClick: () -> Unit
 ) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -444,7 +459,7 @@ fun LocationBanner(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = name,
+                    text = state.locationName,
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
@@ -454,25 +469,83 @@ fun LocationBanner(
             }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Coordinates: ${String.format("%.4f", lat)}°N, ${String.format("%.4f", lon)}°E",
+                text = "Coordinates: ${String.format("%.4f", state.latitude)}°N, ${String.format("%.4f", state.longitude)}°E",
                 color = Color.White.copy(alpha = 0.5f),
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace
             )
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            // Pulse live indicator
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF00FFB2))
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "LIVE FORECAST SYNC ACTIVE (60S REFRESH)",
+                    color = Color(0xFF00FFB2).copy(alpha = 0.8f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
         }
         
-        IconButton(
-            onClick = onRefreshClick,
-            modifier = Modifier
-                .size(36.dp)
-                .background(Color.White.copy(alpha = 0.05f), CircleShape)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = Icons.Default.Refresh,
-                contentDescription = "Sync reports",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp)
-            )
+            IconButton(
+                onClick = {
+                    val summaryText = """
+                        👕 LAUNDRY DRYING & WEATHER SUMMARY
+                        📍 Location: ${state.locationName} (${String.format("%.4f", state.latitude)}°N, ${String.format("%.4f", state.longitude)}°E)
+                        ⏰ Evaporation Power: ${state.dryingScore}% (${state.dryingStateLabel})
+                        🌡️ Temp: ${state.currentTemp}°C | RH: ${state.currentRh}% | Wind: ${state.currentWind} km/h
+                        🧺 Est. Drying Duration: ${String.format("%.1f", state.estimatedDryingHours)} hours
+                        🕒 Expected Finish: ${state.finishPredictionLabel}
+                        🌈 Best Window (12H): ${state.bestWindow12h}
+                        🛡️ Clothes Protection: ${state.apparelRecommendation}
+                        💨 Peak US-AQI: ${state.currentAqi} (${state.aqiLabel})
+                        ✨ Stylist Brief: ${state.aiStylistSuggestion}
+                    """.trimIndent()
+                    
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Laundry Weather Summary", summaryText)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, "Summary copied to clipboard!", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                    .testTag("copy_summary_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentCopy,
+                    contentDescription = "Copy Summary to Clipboard",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            
+            IconButton(
+                onClick = onRefreshClick,
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                    .testTag("refresh_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Sync reports",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }
@@ -763,6 +836,48 @@ fun DryingConfigPanel(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Moisture Level range slider
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Initial Fabric Wetness Mode",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "${(state.initialMoisture * 100).roundToInt()}% (Moist)",
+                    color = Color(0xFF00E5FF),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Slider(
+                value = state.initialMoisture,
+                onValueChange = { viewModel.updateInitialMoisture(it) },
+                valueRange = 0.1f..1.0f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Color(0xFF00E5FF),
+                    activeTrackColor = Color(0xFF00E5FF),
+                    inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("initial_moisture_slider")
+            )
+            Text(
+                text = "Simulates moisture removal rate from lightly damp (10%) to fully drenched/soaked (100%).",
+                color = Color.White.copy(alpha = 0.5f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
             Spacer(modifier = Modifier.height(12.dp))
 
