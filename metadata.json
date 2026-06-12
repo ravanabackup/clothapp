@@ -1,0 +1,6 @@
+{
+  "name": "AQI Clothes Advisor",
+  "description": "An Air Quality Index (AQI) based clothing and health protection advisor. Automatically detects the user's location to recommend appropriate clothes, masks, and activities based on air pollution and weather conditions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
